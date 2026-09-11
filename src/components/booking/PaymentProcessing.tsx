@@ -109,7 +109,7 @@ export const PaymentProcessing: React.FC<PaymentProcessingProps> = ({
         setIsProcessing(false);
         onPaymentSuccess({
           method: 'pay_at_resort',
-          transactionId: 'TXN_RESORT_GTEE_' + Math.random().toString(36).substring(2, 9).toUpperACE(),
+          transactionId: 'TXN_RESORT_GTEE_' + Math.random().toString(36).substring(2, 9).toUpperCase(),
           cardLast4: cardNumber.replace(/\s+/g, '').slice(-4),
         });
       }, 1000);
@@ -239,7 +239,9 @@ export const PaymentProcessing: React.FC<PaymentProcessingProps> = ({
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="text-xs text-white/70">Security CVV</label>
-                <HelpCircle className="w-3.5 h-3.5 text-white/40" title="3 digits on back of card" />
+                <span className="text-white/40" title="3 digits on back of card">
+                  <HelpCircle className="w-3.5 h-3.5" />
+                </span>
               </div>
               <input
                 type="password"
