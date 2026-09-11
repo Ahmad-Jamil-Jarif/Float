@@ -205,7 +205,7 @@ export default function App() {
         vipTier: newReservation.pricing.grandTotal > 3000 ? 'Gold' : 'Standard',
         totalStays: 1,
         totalSpend: newReservation.pricing.grandTotal,
-        notes: newReservation.specialRequests || 'First-time guest at Nusa Seaside.',
+        notes: newReservation.specialRequests || 'First-time guest at Float.',
         preferences: ['Ocean view preference', 'Direct airport meet & greet'],
         lastStayDate: newReservation.checkInDate,
       };

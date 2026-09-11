@@ -35,16 +35,16 @@ export const ConfirmationReceipt: React.FC<ConfirmationReceiptProps> = ({
     const endDate = reservation.checkOutDate.replace(/-/g, '');
     const icsContent = `BEGIN:VCALENDAR
 VERSION:2.0
-PRODID:-//Nusa Seaside Resort//Reservation//EN
+PRODID:-//Float Resort//Reservation//EN
 CALSCALE:GREGORIAN
 METHOD:PUBLISH
 BEGIN:VEVENT
 UID:${reservation.id}@nusaresort.bali
 DTSTART;VALUE=DATE:${startDate}
 DTEND;VALUE=DATE:${endDate}
-SUMMARY:Stay at ${reservation.hotelName} - Nusa Seaside Resort
+SUMMARY:Stay at ${reservation.hotelName} - Float Resort
 DESCRIPTION:Reservation #${reservation.id}\\nGuest: ${reservation.guestName}\\nKey Passcode: #${reservation.keyPasscode}\\nDirect Resort Concierge: +62 361 849 000
-LOCATION:Nusa Seaside Resort & Villas, Bali
+LOCATION:Float Resort & Villas, Bali
 STATUS:CONFIRMED
 END:VEVENT
 END:VCALENDAR`;

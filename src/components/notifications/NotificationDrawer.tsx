@@ -36,7 +36,7 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
     reservations[0]?.guestEmail || 'guest@example.com'
   );
   const [composeChannel, setComposeChannel] = useState<'email' | 'sms'>('email');
-  const [composeTitle, setComposeTitle] = useState('Welcome to Nusa Seaside: Arrival Notice');
+  const [composeTitle, setComposeTitle] = useState('Welcome to Float: Arrival Notice');
   const [composeMessage, setComposeMessage] = useState(
     'Your overwater villa is ready for early check-in. Our private catamaran will greet you at the main pier.'
   );
