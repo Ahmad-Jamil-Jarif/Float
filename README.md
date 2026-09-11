@@ -1,19 +1,14 @@
 # Float
 
-> "The space we inhabit is a reflection of the pauses we take between our thoughts." — *The Float Manifesto*
+> "The space we inhabit is a reflection of the pauses we take between our thoughts." — *Float*
 
-**Atelier Float** is a premium, minimalist digital exhibition and catalog showcasing handcrafted architectural objects, vessels, lighting, and textiles. Designed with rich, luxurious aesthetics, smooth interactions, and a curated gallery layout, Float provides a premium experience for design enthusiasts and curators.
+**Float** is a premium, minimalist digital exhibition and catalog showcasing handcrafted architectural objects, vessels, lighting, and textiles. Designed with rich, luxurious aesthetics, smooth interactions, and a curated gallery layout, Float provides a premium experience for design enthusiasts and curators.
 
 ---
 
-## 📸 Project Preview
+##  Project Preview
 
-<figure>
-  <img src="./picture/landing%20page.png" alt="Landing Page Preview" width="800"/>
-  <figcaption>Figure 1: Landing Page Preview of Float exhibition.</figcaption>
-</figure>
-
-## ✦ Key Features
+##  Key Features
 
 - **Curated Digital Exhibition**: A beautiful, fluid grid displaying handcrafted art pieces categorised into Vessels, Lighting, Textiles, and Objects.
 - **Bespoke Commissions Interface**: A fully interactive commission tool that allows clients to specify materials, finishes, dimensions, and upload reference files under custom budgets.
@@ -34,7 +29,7 @@
 
 ---
 
-## 🚀 Getting Started
+##  Getting Started
 
 ### Prerequisites
 Make sure you have [Node.js](https://nodejs.org/) installed on your machine.
@@ -60,7 +55,7 @@ Make sure you have [Node.js](https://nodejs.org/) installed on your machine.
 
 ---
 
-## 📐 Available Scripts
+##  Available Scripts
 
 - `npm run dev`: Starts the local development server on port 3000.
 - `npm run build`: Generates the optimized production build of the website in the `dist/` directory.
@@ -70,7 +65,7 @@ Make sure you have [Node.js](https://nodejs.org/) installed on your machine.
 
 ---
 
-## 🔒 Master Studio Portal Access
+##  Master Studio Portal Access
 
 To test the curation features:
 1. Scroll down to the website footer or menu and click **Unlock Studio**.
@@ -81,29 +76,4 @@ To test the curation features:
    - Gallery image url updates
    - Archiving/deleting objects directly from the collection grid
 
-## 🖼️ Project Gallery
-
-<figure>
-  <img src="./picture/bag%20option.png" alt="Bag Option" width="800"/>
-  <figcaption>Figure 2: Bag Option preview</figcaption>
-</figure>
-
-<figure>
-  <img src="./picture/bottom.png" alt="Bottom" width="800"/>
-  <figcaption>Figure 3: Bottom view</figcaption>
-</figure>
-
-<figure>
-  <img src="./picture/collection.png" alt="Collection" width="800"/>
-  <figcaption>Figure 4: Collection view</figcaption>
-</figure>
-
-<figure>
-  <img src="./picture/contact.png" alt="Contact" width="800"/>
-  <figcaption>Figure 5: Contact section</figcaption>
-</figure>
-
-<figure>
-  <img src="./picture/delivary%20progress.png" alt="Delivery Progress" width="800"/>
-  <figcaption>Figure 6: Delivery progress</figcaption>
-</figure>
+##  Project Gallery
