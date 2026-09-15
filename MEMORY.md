@@ -1,0 +1,3 @@
+- [Fixed navbar chaos and landing page scrolling issues](fixed-navbar-scrolling-issues.md) — Resolved navbar styling inconsistencies and enabled proper page scrolling by correcting root container constraints and implementing Swiss design system navbar
+- [Fixed build error in Navbar.tsx](fixed-build-error.md) — Resolved JSX syntax error caused by invalid comment placement and corrected button typography to match design system
+- [Fixed signature services icon rotation and verified collection section](fixed-signature-collection-sections.md) — Added hover rotation effect to service card icons (12deg) as per Swiss design spec; verified asymmetrical showcase grid layout and image transitions match requirements

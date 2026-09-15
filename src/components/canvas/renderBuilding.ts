@@ -34,10 +34,10 @@ export function renderOceanTower({
   if (towerFloors.length === 0) return;
 
   // World geometry parameters (situated firmly on the golden beach sand)
-  const baseX = 60;
-  const buildingWidth = 90;
+  const baseX = 1000; // world coordinate for the left edge of the building
+  const buildingWidth = 90; 
   const balconyWidth = 32; // extends to the left (baseX - balconyWidth)
-  const groundY = 840; // placed directly on the beach sand (adjusted to avoid cottage area)
+  const groundY = 1000; // placed directly on the beach sand
   const floorHeight = 25;
   const totalFloors = 10;
 

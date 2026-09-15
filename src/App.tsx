@@ -28,10 +28,11 @@ import { NotificationDrawer } from './components/notifications/NotificationDrawe
 import { StaffDashboard } from './components/staff/StaffDashboard';
 import { AccessibleListView } from './components/accessible/AccessibleListView';
 import { Navbar } from './components/ui/Navbar';
+import { HomePage } from './components/HomePage';
 
 export default function App() {
   // Primary App Views
-  const [currentView, setCurrentView] = useState<'canvas' | 'list' | 'staff'>('canvas');
+  const [currentView, setCurrentView] = useState<'canvas' | 'list' | 'staff' | 'home'>('home');
 
   // Core Data State (synced with LocalStorage)
   const [hotels, setHotels] = useState<Hotel[]>(() => getStoredHotels());
@@ -297,8 +298,8 @@ export default function App() {
       type: 'guest_reminder',
       title,
       recipient,
-      channel,
       message,
+      channel,
       timestamp: new Date().toISOString(),
       read: false,
       status: 'delivered',
@@ -315,7 +316,7 @@ export default function App() {
   };
 
   return (
-    <div id="hotel-applet-root" className="relative w-screen h-screen overflow-hidden bg-[#09121a]">
+    <div id="hotel-applet-root" className="relative w-screen min-h-screen bg-[#f1f0ec]">
       {/* Universal Luxury Navigation Bar */}
       <Navbar
         currentView={currentView}
@@ -327,9 +328,16 @@ export default function App() {
         }}
       />
 
+      {/* VIEW: HOMEPAGE */}
+      {currentView === 'home' && (
+        <main className="relative w-full h-full">
+          <HomePage onSwitchView={setCurrentView} />
+        </main>
+      )}
+
       {/* VIEW 1: INTERACTIVE 2.5D CANVAS RESORT */}
       {currentView === 'canvas' && (
-        <main className="relative w-full h-full pt-16 md:pt-18">
+        <main className="relative w-full h-full pt-16 md:pt-18 overflow-hidden">
           <ResortCanvas
             hotels={hotels}
             selectedHotel={selectedHotel}
