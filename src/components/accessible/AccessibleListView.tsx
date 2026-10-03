@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Star,
   Users,
@@ -32,6 +32,21 @@ export const AccessibleListView: React.FC<AccessibleListViewProps> = ({
   onReturnToCanvas,
 }) => {
   const [search, setSearch] = useState('');
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // Always open at the top: the list mounts while the window may still
+  // carry scroll position from the home page. Reset both the window
+  // and any nested scroll container.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    if (rootRef.current) {
+      rootRef.current.scrollTop = 0;
+      const scroller = rootRef.current.closest('main');
+      if (scroller) scroller.scrollTop = 0;
+    }
+  }, []);
 
   const filteredHotels = useMemo(() => {
     return hotels.filter((h) => {
@@ -47,6 +62,7 @@ export const AccessibleListView: React.FC<AccessibleListViewProps> = ({
   return (
     <div
       id="accessible-villa-directory"
+      ref={rootRef}
       className="w-full min-h-screen bg-[#09121a] text-white p-4 md:p-8 space-y-6"
     >
       {/* Header & Accessibility Notice */}
@@ -151,7 +167,11 @@ export const AccessibleListView: React.FC<AccessibleListViewProps> = ({
             {/* Content Details */}
             <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
               <div>
-                <h2 className="font-editorial text-xl font-semibold text-white group-hover:text-[#d4af37] transition-colors">
+                <h2
+                  className={`font-editorial font-semibold text-white group-hover:text-[#d4af37] transition-colors leading-snug ${
+                    hotel.isBuildingFloor ? 'text-sm' : 'text-xl'
+                  }`}
+                >
                   {hotel.name}
                 </h2>
                 <p className="text-xs text-white/60 italic font-editorial mt-0.5 line-clamp-1">

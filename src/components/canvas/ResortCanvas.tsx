@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Hotel, HotelCategory, TimeOfDay, TourPoint } from '../../types';
 import { renderOceanTower } from './renderBuilding';
 
@@ -21,7 +21,55 @@ interface Particle {
   speedY: number;
   alpha: number;
   maxAlpha: number;
-  pulseSpeed: number;
+  seed: number;
+}
+
+// --- Module constants: hoisted out of render loop ---
+const WORLD_WIDTH = 1000;
+const WORLD_HEIGHT = 680;
+const DEFAULT_CAM_Y = 475;
+const TAU = Math.PI * 2;
+
+const PIER_POINTS = [
+  { x: 500, y: 535 },
+  { x: 500, y: 440 },
+  { x: 380, y: 360 },
+  { x: 510, y: 240 },
+  { x: 740, y: 370 },
+  { x: 240, y: 220 },
+];
+
+const PALMS = [
+  { x: 42, y: 645, scale: 1.15, sway: 0.45 },
+  { x: 195, y: 630, scale: 1.05, sway: 0.35 },
+  { x: 44, y: 530, scale: 0.95, sway: 0.5 },
+  { x: 235, y: 550, scale: 0.9, sway: 0.6 },
+  { x: 420, y: 630, scale: 1.0, sway: 0.5 },
+  { x: 720, y: 620, scale: 1.15, sway: 0.35 },
+  { x: 880, y: 605, scale: 1.05, sway: 0.55 },
+  { x: 10, y: 600, scale: 1.2, sway: 0.4 },
+  { x: 100, y: 620, scale: 1.1, sway: 0.5 },
+  { x: 120, y: 590, scale: 0.9, sway: 0.4 },
+  { x: 200, y: 640, scale: 1.0, sway: 0.4 },
+  { x: 300, y: 630, scale: 1.0, sway: 0.5 },
+];
+
+const WAVE_LAYERS = [
+  { y: 160, amp: 4, freq: 0.02, speed: 1.2, color: 'rgba(255,255,255,0.08)' },
+  { y: 280, amp: 7, freq: 0.015, speed: 1.0, color: 'rgba(255,255,255,0.13)' },
+  { y: 400, amp: 9, freq: 0.012, speed: 0.8, color: 'rgba(255,255,255,0.18)' },
+  { y: 520, amp: 11, freq: 0.01, speed: 0.6, color: 'rgba(255,255,255,0.22)' },
+];
+
+const PILL_COLORS: Record<string, string> = {
+  premium: '#b45309',
+  deluxe: '#1d4ed8',
+  comfort: '#0369a1',
+  basic: '#047857',
+};
+
+function beachCurveAt(wx: number): number {
+  return Math.sin(wx * 0.005 + 0.3) * 16 - Math.cos(wx * 0.009) * 8;
 }
 
 export const ResortCanvas: React.FC<ResortCanvasProps> = ({
@@ -37,12 +85,6 @@ export const ResortCanvas: React.FC<ResortCanvasProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Virtual world dimensions
-  const WORLD_WIDTH = 1000;
-  const WORLD_HEIGHT = 680;
-  const DEFAULT_CAM_Y = 475;
-
-  // Camera state
   const cameraRef = useRef({
     x: WORLD_WIDTH / 2,
     y: DEFAULT_CAM_Y,
@@ -52,23 +94,29 @@ export const ResortCanvas: React.FC<ResortCanvasProps> = ({
     targetZoom: 1,
   });
 
-  // Drag interaction state
   const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const cameraStartRef = useRef({ x: 0, y: 0 });
   const hoveredHotelRef = useRef<Hotel | null>(null);
   const hoveredHotspotRef = useRef<TourPoint | null>(null);
+  const hoverRafRef = useRef(0);
 
   const [hoveredHotel, setHoveredHotel] = useState<Hotel | null>(null);
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+  const lastTooltipRef = useRef<{ id: string | null; x: number; y: number }>({ id: null, x: 0, y: 0 });
 
-  // Particles (sparks at sunset, stars/fireflies at night, sea glint during day)
   const particlesRef = useRef<Particle[]>([]);
 
-  // Initialize particles
+  // Latest props in a ref so the render loop mounts ONCE (no teardown on prop change)
+  const liveRef = useRef({ hotels, selectedHotel, selectedCategory, timeOfDay, isTourMode, activeTourPointId });
+  liveRef.current = { hotels, selectedHotel, selectedCategory, timeOfDay, isTourMode, activeTourPointId };
+
+  // Standalone-villa / tower counts are derived inside the loop via liveRef (no extra work here).
+
+  // Init particles once (reduced count: 45 -> 28, rects not arcs)
   useEffect(() => {
     const list: Particle[] = [];
-    for (let i = 0; i < 45; i++) {
+    for (let i = 0; i < 28; i++) {
       list.push({
         x: Math.random() * WORLD_WIDTH,
         y: Math.random() * WORLD_HEIGHT,
@@ -77,831 +125,803 @@ export const ResortCanvas: React.FC<ResortCanvasProps> = ({
         speedY: (Math.random() - 0.5) * 0.25 - 0.1,
         alpha: Math.random() * 0.7 + 0.2,
         maxAlpha: Math.random() * 0.6 + 0.3,
-        pulseSpeed: Math.random() * 0.03 + 0.01,
+        seed: Math.random() * TAU,
       });
     }
     particlesRef.current = list;
   }, []);
 
-  // Update camera target when selected hotel or tour mode changes
+  // Camera targets (cheap effect, no canvas work)
   useEffect(() => {
+    const cam = cameraRef.current;
     if (selectedHotel) {
       if (isTourMode && activeTourPointId) {
         const pt = selectedHotel.tourPoints.find((p) => p.id === activeTourPointId);
         if (pt) {
-          cameraRef.current.targetX = pt.view.x;
-          cameraRef.current.targetY = pt.view.y;
-          cameraRef.current.targetZoom = 1.65;
+          cam.targetX = pt.view.x;
+          cam.targetY = pt.view.y;
+          cam.targetZoom = 1.65;
           return;
         }
       }
       if (selectedHotel.isBuildingFloor) {
-        cameraRef.current.targetX = selectedHotel.position.x + 10;
-        cameraRef.current.targetY = selectedHotel.position.y;
-        cameraRef.current.targetZoom = 1.5;
+        cam.targetX = selectedHotel.position.x + 10;
+        cam.targetY = selectedHotel.position.y;
+        cam.targetZoom = 1.5;
       } else {
-        cameraRef.current.targetX = selectedHotel.position.x;
-        cameraRef.current.targetY = selectedHotel.position.y;
-        cameraRef.current.targetZoom = 1.45;
+        cam.targetX = selectedHotel.position.x;
+        cam.targetY = selectedHotel.position.y;
+        cam.targetZoom = 1.45;
       }
     } else {
-      cameraRef.current.targetX = WORLD_WIDTH / 2;
-      cameraRef.current.targetY = DEFAULT_CAM_Y;
-      cameraRef.current.targetZoom = 1;
+      cam.targetX = WORLD_WIDTH / 2;
+      cam.targetY = DEFAULT_CAM_Y;
+      cam.targetZoom = 1;
     }
   }, [selectedHotel, isTourMode, activeTourPointId]);
 
-  // Coordinate conversion: World to Screen
-  const worldToScreen = useCallback((wx: number, wy: number, width: number, height: number) => {
-    const { x, y, zoom } = cameraRef.current;
-    const sx = width / 2 + (wx - x) * zoom;
-    const sy = height / 2 + (wy - y) * zoom;
-    return { sx, sy, scale: zoom };
-  }, []);
-
-  // Coordinate conversion: Screen to World
-  const screenToWorld = useCallback((sx: number, sy: number, width: number, height: number) => {
-    const { x, y, zoom } = cameraRef.current;
-    const wx = (sx - width / 2) / zoom + x;
-    const wy = (sy - height / 2) / zoom + y;
-    return { wx, wy };
-  }, []);
-
-  // Main Render Loop
+  // Native non-passive wheel listener (React onWheel can't preventDefault efficiently)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const zoomFactor = e.deltaY < 0 ? 1.15 : 0.88;
+      const cam = cameraRef.current;
+      cam.targetZoom = Math.max(0.75, Math.min(2.5, cam.targetZoom * zoomFactor));
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, []);
+
+  // ===== MAIN RENDER LOOP (mounted once) =====
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true } as CanvasRenderingContext2DSettings);
     if (!ctx) return;
 
-    let animationFrameId: number;
+    let animationFrameId = 0;
     let time = 0;
+    let frame = 0;
+    let visible = true;
+    let dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    let cssW = 0;
+    let cssH = 0;
+
+    // Gradient caches (rebuilt only when key changes)
+    let skyKey = '';
+    let skyGrad: CanvasGradient | null = null;
+    let oceanKey = '';
+    let oceanGrad: CanvasGradient | null = null;
+    let sandKey = '';
+    let sandGrad: CanvasGradient | null = null;
+    const pillWidthCache = new Map<string, number>();
+
+    const ro = new ResizeObserver(() => {
+      const ndpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      if (ndpr !== dpr) { dpr = ndpr; skyKey = ''; oceanKey = ''; sandKey = ''; }
+    });
+    if (container) ro.observe(container);
+
+    const io = new IntersectionObserver(
+      (entries) => { visible = entries[0]?.isIntersecting ?? true; },
+      { threshold: 0 }
+    );
+    if (container) io.observe(container);
+    const onVis = () => { /* document.hidden checked in loop */ };
+    document.addEventListener('visibilitychange', onVis);
+
+    const ensureSize = (): boolean => {
+      const w = canvas.clientWidth || container?.clientWidth || 0;
+      const h = canvas.clientHeight || container?.clientHeight || 0;
+      if (!w || !h) return false;
+      if (w !== cssW || h !== cssH) {
+        cssW = w; cssH = h;
+        skyKey = ''; oceanKey = ''; sandKey = '';
+      }
+      const bw = Math.round(w * dpr);
+      const bh = Math.round(h * dpr);
+      if (canvas.width !== bw || canvas.height !== bh) {
+        canvas.width = bw;
+        canvas.height = bh;
+      }
+      return true;
+    };
 
     const render = () => {
-      time += 0.025;
+      animationFrameId = requestAnimationFrame(render);
+      if (!visible || document.hidden) return;
+      if (!ensureSize()) return;
+      const width = cssW;
+      const height = cssH;
 
-      // Handle canvas resolution and DPR
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const width = canvas.clientWidth;
-      const height = canvas.clientHeight;
+      const live = liveRef.current;
+      const curTimeOfDay = live.timeOfDay;
+      const curHotels = live.hotels;
+      const curSelected = live.selectedHotel;
+      const curCategory = live.selectedCategory;
+      const curTourMode = live.isTourMode;
+      const curActiveTp = live.activeTourPointId;
 
-      if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
-        canvas.width = width * dpr;
-        canvas.height = height * dpr;
-      }
-
-      ctx.save();
-      ctx.scale(dpr, dpr);
-
-      // Interpolate camera towards target (lerp)
+      // Idle detection: camera settled + no selection pulse needed at full rate
       const cam = cameraRef.current;
-      cam.x += (cam.targetX - cam.x) * 0.07;
-      cam.y += (cam.targetY - cam.y) * 0.07;
-      cam.zoom += (cam.targetZoom - cam.zoom) * 0.07;
-
-      // --- 1. SKY & HORIZON LAYER ---
-      const skyGradient = ctx.createLinearGradient(0, 0, 0, height);
-      if (timeOfDay === 'sunset') {
-        skyGradient.addColorStop(0, '#1c1328');
-        skyGradient.addColorStop(0.28, '#441d3e');
-        skyGradient.addColorStop(0.55, '#a44136');
-        skyGradient.addColorStop(0.78, '#d97736');
-        skyGradient.addColorStop(1, '#1b3240');
-      } else if (timeOfDay === 'twilight') {
-        skyGradient.addColorStop(0, '#060b14');
-        skyGradient.addColorStop(0.35, '#0c1a2c');
-        skyGradient.addColorStop(0.7, '#112940');
-        skyGradient.addColorStop(1, '#0b1c2b');
-      } else {
-        // Daytime Tropical
-        skyGradient.addColorStop(0, '#38bdf8');
-        skyGradient.addColorStop(0.35, '#7dd3fc');
-        skyGradient.addColorStop(0.65, '#a5f3fc');
-        skyGradient.addColorStop(1, '#0e7490');
+      const dx = cam.targetX - cam.x;
+      const dy = cam.targetY - cam.y;
+      const dz = cam.targetZoom - cam.zoom;
+      const settled = Math.abs(dx) < 0.08 && Math.abs(dy) < 0.08 && Math.abs(dz) < 0.002;
+      frame++;
+      // At idle (no drag, settled camera), render at ~30fps. Interaction stays 60fps.
+      if (settled && !isDraggingRef.current && frame % 2 === 0) {
+        // Still advance camera lerp cheaply every other frame below; skip draw
+        cam.x += dx * 0.07;
+        cam.y += dy * 0.07;
+        cam.zoom += dz * 0.07;
+        time += 0.025;
+        return;
       }
-      ctx.fillStyle = skyGradient;
+
+      time += 0.025;
+      const zoom = cam.zoom;
+      // Lerp camera
+      cam.x += dx * 0.07;
+      cam.y += dy * 0.07;
+      cam.zoom += dz * 0.07;
+      const cx = cam.x;
+      const cy = cam.y;
+      const cz = cam.zoom;
+      const halfW = width / 2;
+      const halfH = height / 2;
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      // --- 1. SKY (cached gradient) ---
+      const newSkyKey = curTimeOfDay + '|' + height;
+      if (newSkyKey !== skyKey || !skyGrad) {
+        const g = ctx.createLinearGradient(0, 0, 0, height);
+        if (curTimeOfDay === 'sunset') {
+          g.addColorStop(0, '#1c1328');
+          g.addColorStop(0.28, '#441d3e');
+          g.addColorStop(0.55, '#a44136');
+          g.addColorStop(0.78, '#d97736');
+          g.addColorStop(1, '#1b3240');
+        } else if (curTimeOfDay === 'twilight') {
+          g.addColorStop(0, '#060b14');
+          g.addColorStop(0.35, '#0c1a2c');
+          g.addColorStop(0.7, '#112940');
+          g.addColorStop(1, '#0b1c2b');
+        } else {
+          g.addColorStop(0, '#38bdf8');
+          g.addColorStop(0.35, '#7dd3fc');
+          g.addColorStop(0.65, '#a5f3fc');
+          g.addColorStop(1, '#0e7490');
+        }
+        skyGrad = g;
+        skyKey = newSkyKey;
+      }
+      ctx.fillStyle = skyGrad;
       ctx.fillRect(0, 0, width, height);
 
-      // Celestial Sun / Moon
-      const sunScreen = worldToScreen(timeOfDay === 'sunset' ? 250 : 780, 100, width, height);
-      const celestialGrad = ctx.createRadialGradient(
-        sunScreen.sx,
-        sunScreen.sy,
-        10 * cam.zoom,
-        sunScreen.sx,
-        sunScreen.sy,
-        160 * cam.zoom
-      );
-
-      if (timeOfDay === 'sunset') {
-        celestialGrad.addColorStop(0, 'rgba(255, 240, 200, 0.95)');
-        celestialGrad.addColorStop(0.2, 'rgba(251, 146, 60, 0.7)');
-        celestialGrad.addColorStop(0.6, 'rgba(239, 68, 68, 0.25)');
-        celestialGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-      } else if (timeOfDay === 'twilight') {
-        celestialGrad.addColorStop(0, 'rgba(255, 255, 240, 0.9)');
-        celestialGrad.addColorStop(0.2, 'rgba(186, 230, 253, 0.4)');
-        celestialGrad.addColorStop(0.7, 'rgba(56, 189, 248, 0.08)');
-        celestialGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-      } else {
-        celestialGrad.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
-        celestialGrad.addColorStop(0.25, 'rgba(254, 240, 138, 0.5)');
-        celestialGrad.addColorStop(0.6, 'rgba(56, 189, 248, 0.15)');
-        celestialGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      // Celestial glow (1 radial/frame, culled if off-screen)
+      const sunWx = curTimeOfDay === 'sunset' ? 250 : 780;
+      const sunSx = halfW + (sunWx - cx) * cz;
+      const sunSy = halfH + (100 - cy) * cz;
+      if (sunSx > -220 && sunSx < width + 220 && sunSy > -220 && sunSy < height + 220) {
+        const celestialGrad = ctx.createRadialGradient(sunSx, sunSy, 10 * cz, sunSx, sunSy, 160 * cz);
+        if (curTimeOfDay === 'sunset') {
+          celestialGrad.addColorStop(0, 'rgba(255,240,200,0.95)');
+          celestialGrad.addColorStop(0.2, 'rgba(251,146,60,0.7)');
+          celestialGrad.addColorStop(0.6, 'rgba(239,68,68,0.25)');
+          celestialGrad.addColorStop(1, 'rgba(0,0,0,0)');
+        } else if (curTimeOfDay === 'twilight') {
+          celestialGrad.addColorStop(0, 'rgba(255,255,240,0.9)');
+          celestialGrad.addColorStop(0.2, 'rgba(186,230,253,0.4)');
+          celestialGrad.addColorStop(0.7, 'rgba(56,189,248,0.08)');
+          celestialGrad.addColorStop(1, 'rgba(0,0,0,0)');
+        } else {
+          celestialGrad.addColorStop(0, 'rgba(255,255,255,0.95)');
+          celestialGrad.addColorStop(0.25, 'rgba(254,240,138,0.5)');
+          celestialGrad.addColorStop(0.6, 'rgba(56,189,248,0.15)');
+          celestialGrad.addColorStop(1, 'rgba(0,0,0,0)');
+        }
+        ctx.fillStyle = celestialGrad;
+        ctx.beginPath();
+        ctx.arc(sunSx, sunSy, 160 * cz, 0, TAU);
+        ctx.fill();
       }
 
-      ctx.fillStyle = celestialGrad;
-      ctx.beginPath();
-      ctx.arc(sunScreen.sx, sunScreen.sy, 160 * cam.zoom, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Distant Tropical Mountain Ridges (Parallax Depth = 0.3)
-      const distantParallax = (cam.x - WORLD_WIDTH / 2) * 0.15;
+      // Distant mountains (coarser step: 30 -> 48)
+      const distantParallax = (cx - WORLD_WIDTH / 2) * 0.15;
       ctx.beginPath();
       ctx.moveTo(0, height * 0.42);
-      for (let x = 0; x <= width; x += 30) {
+      const mStep = Math.max(44, width / 32);
+      for (let x = 0; x <= width; x += mStep) {
         const wx = (x + distantParallax) * 0.005;
-        const yOffset = Math.sin(wx * 2) * 22 + Math.cos(wx * 4.5) * 14;
-        ctx.lineTo(x, height * 0.38 + yOffset);
+        ctx.lineTo(x, height * 0.38 + Math.sin(wx * 2) * 22 + Math.cos(wx * 4.5) * 14);
       }
       ctx.lineTo(width, height);
       ctx.lineTo(0, height);
+      ctx.closePath();
       ctx.fillStyle =
-        timeOfDay === 'sunset'
-          ? 'rgba(68, 29, 62, 0.4)'
-          : timeOfDay === 'twilight'
-          ? 'rgba(10, 25, 45, 0.5)'
-          : 'rgba(14, 116, 144, 0.25)';
+        curTimeOfDay === 'sunset'
+          ? 'rgba(68,29,62,0.4)'
+          : curTimeOfDay === 'twilight'
+            ? 'rgba(10,25,45,0.5)'
+            : 'rgba(14,116,144,0.25)';
       ctx.fill();
 
-      // --- 2. DEEP OCEAN & PARALLAX WAVES LAYER ---
-      const oceanTop = worldToScreen(0, 140, width, height).sy;
-      const oceanGrad = ctx.createLinearGradient(0, oceanTop, 0, height);
-      if (timeOfDay === 'sunset') {
-        oceanGrad.addColorStop(0, '#2d2540');
-        oceanGrad.addColorStop(0.3, '#1d3e52');
-        oceanGrad.addColorStop(0.7, '#134050');
-        oceanGrad.addColorStop(1, '#0d2836');
-      } else if (timeOfDay === 'twilight') {
-        oceanGrad.addColorStop(0, '#0a1624');
-        oceanGrad.addColorStop(0.4, '#0d2033');
-        oceanGrad.addColorStop(0.8, '#081726');
-        oceanGrad.addColorStop(1, '#050f1a');
-      } else {
-        oceanGrad.addColorStop(0, '#0284c7');
-        oceanGrad.addColorStop(0.25, '#0ea5e9');
-        oceanGrad.addColorStop(0.65, '#0891b2');
-        oceanGrad.addColorStop(1, '#0f766e');
+      // --- 2. OCEAN (cached gradient) ---
+      const oceanTop = halfH + (140 - cy) * cz;
+      const newOceanKey = curTimeOfDay + '|' + (oceanTop | 0) + '|' + height;
+      if (newOceanKey !== oceanKey || !oceanGrad) {
+        const g = ctx.createLinearGradient(0, Math.max(0, oceanTop), 0, height);
+        if (curTimeOfDay === 'sunset') {
+          g.addColorStop(0, '#2d2540');
+          g.addColorStop(0.3, '#1d3e52');
+          g.addColorStop(0.7, '#134050');
+          g.addColorStop(1, '#0d2836');
+        } else if (curTimeOfDay === 'twilight') {
+          g.addColorStop(0, '#0a1624');
+          g.addColorStop(0.4, '#0d2033');
+          g.addColorStop(0.8, '#081726');
+          g.addColorStop(1, '#050f1a');
+        } else {
+          g.addColorStop(0, '#0284c7');
+          g.addColorStop(0.25, '#0ea5e9');
+          g.addColorStop(0.65, '#0891b2');
+          g.addColorStop(1, '#0f766e');
+        }
+        oceanGrad = g;
+        oceanKey = newOceanKey;
       }
       ctx.fillStyle = oceanGrad;
-      ctx.fillRect(0, oceanTop, width, height - oceanTop);
+      ctx.fillRect(0, Math.max(0, oceanTop), width, height - Math.max(0, oceanTop));
 
-      // Procedural Sine Waves (3 layered depth passes)
-      const waveLayers = [
-        { y: 160, amp: 4, freq: 0.02, speed: 1.2, color: 'rgba(255,255,255,0.08)' },
-        { y: 280, amp: 7, freq: 0.015, speed: 1.0, color: 'rgba(255,255,255,0.13)' },
-        { y: 400, amp: 9, freq: 0.012, speed: 0.8, color: 'rgba(255,255,255,0.18)' },
-        { y: 520, amp: 11, freq: 0.01, speed: 0.6, color: 'rgba(255,255,255,0.22)' },
-      ];
-
-      waveLayers.forEach((w) => {
-        const waveScreen = worldToScreen(0, w.y, width, height);
+      // Waves: coarser step, inline projection, skip off-screen layers
+      const wStep = Math.max(26, width / 48);
+      ctx.lineWidth = 1.5 * cz;
+      for (let li = 0; li < WAVE_LAYERS.length; li++) {
+        const w = WAVE_LAYERS[li];
+        const waveSy = halfH + (w.y - cy) * cz;
+        if (waveSy < -40 || waveSy > height + 40) continue;
         ctx.beginPath();
-        ctx.moveTo(0, waveScreen.sy);
-
-        for (let sx = 0; sx <= width; sx += 15) {
-          const worldPt = screenToWorld(sx, waveScreen.sy, width, height);
-          const waveElevation =
-            Math.sin(worldPt.wx * w.freq + time * w.speed) * w.amp * cam.zoom +
-            Math.cos(worldPt.wx * w.freq * 1.8 - time * 0.4) * (w.amp * 0.4 * cam.zoom);
-          ctx.lineTo(sx, waveScreen.sy + waveElevation);
+        ctx.moveTo(0, waveSy);
+        const invZoom = 1 / cz;
+        for (let sxx = 0; sxx <= width; sxx += wStep) {
+          const wwx = (sxx - halfW) * invZoom + cx;
+          const e =
+            Math.sin(wwx * w.freq + time * w.speed) * w.amp * cz +
+            Math.cos(wwx * w.freq * 1.8 - time * 0.4) * (w.amp * 0.4 * cz);
+          ctx.lineTo(sxx, waveSy + e);
         }
         ctx.strokeStyle = w.color;
-        ctx.lineWidth = 1.5 * cam.zoom;
         ctx.stroke();
-      });
-
-      // Water Caustics / Sun Glint Reflection down to foreground
-      const sunReflectX = sunScreen.sx;
-      const reflectGrad = ctx.createLinearGradient(sunReflectX, oceanTop, sunReflectX, height);
-      if (timeOfDay === 'sunset') {
-        reflectGrad.addColorStop(0, 'rgba(251, 146, 60, 0.4)');
-        reflectGrad.addColorStop(0.5, 'rgba(245, 158, 11, 0.25)');
-        reflectGrad.addColorStop(1, 'rgba(239, 68, 68, 0.05)');
-      } else if (timeOfDay === 'twilight') {
-        reflectGrad.addColorStop(0, 'rgba(186, 230, 253, 0.35)');
-        reflectGrad.addColorStop(0.5, 'rgba(125, 211, 252, 0.15)');
-        reflectGrad.addColorStop(1, 'rgba(56, 189, 248, 0.02)');
-      } else {
-        reflectGrad.addColorStop(0, 'rgba(255, 255, 255, 0.5)');
-        reflectGrad.addColorStop(0.5, 'rgba(224, 242, 254, 0.25)');
-        reflectGrad.addColorStop(1, 'rgba(255, 255, 255, 0.04)');
       }
 
-      ctx.save();
-      ctx.fillStyle = reflectGrad;
-      ctx.beginPath();
-      ctx.moveTo(sunReflectX - 25 * cam.zoom, oceanTop);
-      ctx.lineTo(sunReflectX + 25 * cam.zoom, oceanTop);
-      ctx.lineTo(sunReflectX + 180 * cam.zoom, height);
-      ctx.lineTo(sunReflectX - 180 * cam.zoom, height);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-
-      // --- 3. SHORELINE, EXPANSIVE SANDY BEACH & RESORT PAVILION (ZONE A) ---
-      // Shoreline curve in world coordinates (divides canvas evenly: top half sea, bottom half sand)
-      const shoreWorldY = 475;
-      const shoreScreen = worldToScreen(0, shoreWorldY, width, height);
-
-      // Sand terrain path
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(0, height);
-
-      for (let sx = 0; sx <= width; sx += 16) {
-        const wp = screenToWorld(sx, shoreScreen.sy, width, height);
-        // Smooth natural tropical shoreline curve across the full canvas
-        const beachCurve = Math.sin(wp.wx * 0.005 + 0.3) * 16 - Math.cos(wp.wx * 0.009) * 8;
-        const shoreY = shoreWorldY + beachCurve;
-        const pt = worldToScreen(wp.wx, shoreY, width, height);
-        if (sx === 0) ctx.lineTo(0, pt.sy);
-        else ctx.lineTo(sx, pt.sy);
-      }
-      ctx.lineTo(width, height);
-      ctx.closePath();
-
-      // Sand color gradient
-      const sandGrad = ctx.createLinearGradient(0, shoreScreen.sy, 0, height);
-      if (timeOfDay === 'sunset') {
-        sandGrad.addColorStop(0, '#c28859');
-        sandGrad.addColorStop(0.4, '#b07346');
-        sandGrad.addColorStop(1, '#663920');
-      } else if (timeOfDay === 'twilight') {
-        sandGrad.addColorStop(0, '#363c45');
-        sandGrad.addColorStop(0.5, '#292d34');
-        sandGrad.addColorStop(1, '#1b1e23');
-      } else {
-        sandGrad.addColorStop(0, '#fef08a');
-        sandGrad.addColorStop(0.3, '#fde047');
-        sandGrad.addColorStop(0.8, '#eab308');
-        sandGrad.addColorStop(1, '#ca8a04');
-      }
-      ctx.fillStyle = sandGrad;
-      ctx.fill();
-
-      // Wet Sand / Shore Foam line with gentle wave oscillation
-      ctx.lineWidth = 4 * cam.zoom;
-      ctx.strokeStyle =
-        timeOfDay === 'twilight'
-          ? 'rgba(186, 230, 253, 0.4)'
-          : timeOfDay === 'sunset'
-          ? 'rgba(254, 215, 170, 0.6)'
-          : 'rgba(255, 255, 255, 0.75)';
-      ctx.stroke();
-
-      // Dynamic tidal wash froth line lapping along the sand
-      ctx.beginPath();
-      for (let sx = 0; sx <= width; sx += 16) {
-        const wp = screenToWorld(sx, shoreScreen.sy, width, height);
-        const surfOsc = Math.sin(time * 2.2 + wp.wx * 0.015) * 5;
-        const beachCurve = Math.sin(wp.wx * 0.005 + 0.3) * 16 - Math.cos(wp.wx * 0.009) * 8;
-        const washY = shoreWorldY + beachCurve + 6 + surfOsc;
-        const pt = worldToScreen(wp.wx, washY, width, height);
-        if (sx === 0) ctx.moveTo(0, pt.sy);
-        else ctx.lineTo(sx, pt.sy);
-      }
-      ctx.lineWidth = 2 * cam.zoom;
-      ctx.strokeStyle =
-        timeOfDay === 'twilight'
-          ? 'rgba(224, 242, 254, 0.3)'
-          : timeOfDay === 'sunset'
-          ? 'rgba(254, 243, 199, 0.4)'
-          : 'rgba(255, 255, 255, 0.6)';
-      ctx.stroke();
-      ctx.restore();
-
-      // --- 4. BOARDWALKS & TIMBER PIERS ---
-      // Connecting pier spine in world coordinates (rooted on the sand and extending out into the sea)
-      const pierPoints = [
-        { x: 500, y: 535 }, // beach root on the sand
-        { x: 500, y: 440 }, // lagoon hub in the sea
-        { x: 380, y: 360 }, // deluxe west
-        { x: 510, y: 240 }, // royal premium
-        { x: 740, y: 370 }, // deluxe east
-        { x: 240, y: 220 }, // empress west
-      ];
-
-      // Draw pier shadows
-      ctx.save();
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
-      ctx.lineWidth = 14 * cam.zoom;
-      ctx.beginPath();
-      // Main central pier
-      let pt1 = worldToScreen(pierPoints[0].x, pierPoints[0].y + 6, width, height);
-      let pt2 = worldToScreen(pierPoints[1].x, pierPoints[1].y + 6, width, height);
-      let pt3 = worldToScreen(pierPoints[3].x, pierPoints[3].y + 6, width, height);
-      ctx.moveTo(pt1.sx, pt1.sy);
-      ctx.lineTo(pt2.sx, pt2.sy);
-      ctx.lineTo(pt3.sx, pt3.sy);
-
-      // West arm to deluxe 1 & empress
-      let ptW1 = worldToScreen(pierPoints[2].x, pierPoints[2].y + 6, width, height);
-      let ptW2 = worldToScreen(pierPoints[5].x, pierPoints[5].y + 6, width, height);
-      ctx.moveTo(pt2.sx, pt2.sy);
-      ctx.lineTo(ptW1.sx, ptW1.sy);
-      ctx.lineTo(ptW2.sx, ptW2.sy);
-
-      // East arm to deluxe 2
-      let ptE = worldToScreen(pierPoints[4].x, pierPoints[4].y + 6, width, height);
-      ctx.moveTo(pt2.sx, pt2.sy);
-      ctx.lineTo(ptE.sx, ptE.sy);
-      ctx.stroke();
-
-      // Draw timber boardwalk surface
-      ctx.strokeStyle = timeOfDay === 'twilight' ? '#4a3f35' : '#8b5a2b';
-      ctx.lineWidth = 10 * cam.zoom;
-      ctx.beginPath();
-      pt1 = worldToScreen(pierPoints[0].x, pierPoints[0].y, width, height);
-      pt2 = worldToScreen(pierPoints[1].x, pierPoints[1].y, width, height);
-      pt3 = worldToScreen(pierPoints[3].x, pierPoints[3].y, width, height);
-      ctx.moveTo(pt1.sx, pt1.sy);
-      ctx.lineTo(pt2.sx, pt2.sy);
-      ctx.lineTo(pt3.sx, pt3.sy);
-
-      ptW1 = worldToScreen(pierPoints[2].x, pierPoints[2].y, width, height);
-      ptW2 = worldToScreen(pierPoints[5].x, pierPoints[5].y, width, height);
-      ctx.moveTo(pt2.sx, pt2.sy);
-      ctx.lineTo(ptW1.sx, ptW1.sy);
-      ctx.lineTo(ptW2.sx, ptW2.sy);
-
-      ptE = worldToScreen(pierPoints[4].x, pierPoints[4].y, width, height);
-      ctx.moveTo(pt2.sx, pt2.sy);
-      ctx.lineTo(ptE.sx, ptE.sy);
-      ctx.stroke();
-
-      // Pier edge highlights
-      ctx.strokeStyle = timeOfDay === 'twilight' ? '#6b5849' : '#b8860b';
-      ctx.lineWidth = 1.5 * cam.zoom;
-      ctx.stroke();
-      ctx.restore();
-
-      // Palm trees & Beach flora along the shore and flanking the beachfront tower
-      const palms = [
-        { x: 42, y: 645, scale: 1.15, sway: 0.45 },
-        { x: 195, y: 630, scale: 1.05, sway: 0.35 },
-        { x: 44, y: 530, scale: 0.95, sway: 0.5 },
-        { x: 235, y: 550, scale: 0.9, sway: 0.6 },
-        { x: 420, y: 630, scale: 1.0, sway: 0.5 },
-        { x: 720, y: 620, scale: 1.15, sway: 0.35 },
-        { x: 880, y: 605, scale: 1.05, sway: 0.55 },
-        // Additional trees
-        { x: 10, y: 600, scale: 1.2, sway: 0.4 },
-        { x: 25, y: 580, scale: 1.0, sway: 0.3 },
-        { x: 100, y: 620, scale: 1.1, sway: 0.5 },
-        { x: 120, y: 590, scale: 0.9, sway: 0.4 },
-        { x: 200, y: 640, scale: 1.0, sway: 0.4 },
-        { x: 220, y: 610, scale: 0.9, sway: 0.3 },
-        { x: 300, y: 630, scale: 1.0, sway: 0.5 },
-        { x: 350, y: 600, scale: 0.8, sway: 0.4 },
-      ];
-
-      palms.forEach((p) => {
-        const sc = worldToScreen(p.x, p.y, width, height);
-        const swayAngle = Math.sin(time + p.sway) * 0.08;
-
-        ctx.save();
-        ctx.translate(sc.sx, sc.sy);
-        ctx.rotate(swayAngle);
-
-        // Trunk
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.quadraticCurveTo(8 * cam.zoom, -25 * cam.zoom, 4 * cam.zoom, -50 * cam.zoom * p.scale);
-        ctx.lineWidth = 4.5 * cam.zoom;
-        ctx.strokeStyle = timeOfDay === 'twilight' ? '#272018' : '#654321';
-        ctx.stroke();
-
-        // Palm fronds
-        const leafColor = timeOfDay === 'twilight' ? '#0d251c' : timeOfDay === 'sunset' ? '#2f4f2f' : '#15803d';
-        ctx.fillStyle = leafColor;
-        ctx.strokeStyle = leafColor;
-        ctx.lineWidth = 2 * cam.zoom;
-
-        for (let a = 0; a < 6; a++) {
-          const angle = (a * Math.PI) / 3 + Math.sin(time * 1.2 + a) * 0.05;
-          const lx = Math.cos(angle) * 30 * cam.zoom * p.scale;
-          const ly = Math.sin(angle) * 16 * cam.zoom * p.scale - 50 * cam.zoom * p.scale;
-          ctx.beginPath();
-          ctx.moveTo(4 * cam.zoom, -50 * cam.zoom * p.scale);
-          ctx.quadraticCurveTo(lx * 0.6, ly - 8 * cam.zoom, lx, ly);
-          ctx.stroke();
+      // Sun glint (single quad fill, no gradient object churn beyond 1)
+      if (sunSx > -300 && sunSx < width + 300) {
+        const reflectGrad = ctx.createLinearGradient(0, oceanTop, 0, height);
+        if (curTimeOfDay === 'sunset') {
+          reflectGrad.addColorStop(0, 'rgba(251,146,60,0.4)');
+          reflectGrad.addColorStop(0.5, 'rgba(245,158,11,0.25)');
+          reflectGrad.addColorStop(1, 'rgba(239,68,68,0.05)');
+        } else if (curTimeOfDay === 'twilight') {
+          reflectGrad.addColorStop(0, 'rgba(186,230,253,0.35)');
+          reflectGrad.addColorStop(0.5, 'rgba(125,211,252,0.15)');
+          reflectGrad.addColorStop(1, 'rgba(56,189,248,0.02)');
+        } else {
+          reflectGrad.addColorStop(0, 'rgba(255,255,255,0.5)');
+          reflectGrad.addColorStop(0.5, 'rgba(224,242,254,0.25)');
+          reflectGrad.addColorStop(1, 'rgba(255,255,255,0.04)');
         }
-        ctx.restore();
+        ctx.fillStyle = reflectGrad;
+        ctx.beginPath();
+        ctx.moveTo(sunSx - 25 * cz, oceanTop);
+        ctx.lineTo(sunSx + 25 * cz, oceanTop);
+        ctx.lineTo(sunSx + 180 * cz, height);
+        ctx.lineTo(sunSx - 180 * cz, height);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      // --- 3. SHORELINE (cached sand gradient, coarser path) ---
+      const shoreWorldY = 475;
+      const shoreSy = halfH + (shoreWorldY - cy) * cz;
+      if (shoreSy < height + 120) {
+        const newSandKey = curTimeOfDay + '|' + (shoreSy | 0) + '|' + height;
+        if (newSandKey !== sandKey || !sandGrad) {
+          const g = ctx.createLinearGradient(0, shoreSy, 0, height);
+          if (curTimeOfDay === 'sunset') {
+            g.addColorStop(0, '#c28859');
+            g.addColorStop(0.4, '#b07346');
+            g.addColorStop(1, '#663920');
+          } else if (curTimeOfDay === 'twilight') {
+            g.addColorStop(0, '#363c45');
+            g.addColorStop(0.5, '#292d34');
+            g.addColorStop(1, '#1b1e23');
+          } else {
+            g.addColorStop(0, '#fef08a');
+            g.addColorStop(0.3, '#fde047');
+            g.addColorStop(0.8, '#eab308');
+            g.addColorStop(1, '#ca8a04');
+          }
+          sandGrad = g;
+          sandKey = newSandKey;
+        }
+        const sStep = Math.max(26, width / 44);
+        const invZoom = 1 / cz;
+        ctx.beginPath();
+        ctx.moveTo(0, height);
+        ctx.lineTo(0, halfH + (shoreWorldY + beachCurveAt((0 - halfW) * invZoom + cx) - cy) * cz);
+        for (let sxx = sStep; sxx <= width; sxx += sStep) {
+          const wwx = (sxx - halfW) * invZoom + cx;
+          ctx.lineTo(sxx, halfH + (shoreWorldY + beachCurveAt(wwx) - cy) * cz);
+        }
+        ctx.lineTo(width, height);
+        ctx.closePath();
+        ctx.fillStyle = sandGrad;
+        ctx.fill();
+
+        // Foam lines: single batched path each, cheaper widths
+        ctx.lineWidth = Math.max(1.5, 4 * cz);
+        ctx.strokeStyle =
+          curTimeOfDay === 'twilight'
+            ? 'rgba(186,230,253,0.4)'
+            : curTimeOfDay === 'sunset'
+              ? 'rgba(254,215,170,0.6)'
+              : 'rgba(255,255,255,0.75)';
+        ctx.stroke();
+
+        ctx.beginPath();
+        let started = false;
+        for (let sxx = 0; sxx <= width; sxx += sStep) {
+          const wwx = (sxx - halfW) * invZoom + cx;
+          const washY = shoreWorldY + beachCurveAt(wwx) + 6 + Math.sin(time * 2.2 + wwx * 0.015) * 5;
+          const py = halfH + (washY - cy) * cz;
+          if (!started) { ctx.moveTo(0, py); started = true; }
+          else ctx.lineTo(sxx, py);
+        }
+        ctx.lineWidth = Math.max(1, 2 * cz);
+        ctx.strokeStyle =
+          curTimeOfDay === 'twilight'
+            ? 'rgba(224,242,254,0.3)'
+            : curTimeOfDay === 'sunset'
+              ? 'rgba(254,243,199,0.4)'
+              : 'rgba(255,255,255,0.6)';
+        ctx.stroke();
+      }
+
+      // --- 4. PIERS (inline projection, culled bounding check) ---
+      {
+        const p0sx = halfW + (PIER_POINTS[0].x - cx) * cz;
+        const p0sy = halfH + (PIER_POINTS[0].y - cy) * cz;
+        if (p0sy > -200 && p0sy < height + 200) {
+          const px = (i: number) => halfW + (PIER_POINTS[i].x - cx) * cz;
+          const py = (i: number) => halfH + (PIER_POINTS[i].y - cy) * cz;
+          ctx.lineCap = 'round';
+          ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+          ctx.lineWidth = 14 * cz;
+          ctx.beginPath();
+          ctx.moveTo(px(0), py(0) + 6 * cz);
+          ctx.lineTo(px(1), py(1) + 6 * cz);
+          ctx.lineTo(px(3), py(3) + 6 * cz);
+          ctx.moveTo(px(1), py(1) + 6 * cz);
+          ctx.lineTo(px(2), py(2) + 6 * cz);
+          ctx.lineTo(px(5), py(5) + 6 * cz);
+          ctx.moveTo(px(1), py(1) + 6 * cz);
+          ctx.lineTo(px(4), py(4) + 6 * cz);
+          ctx.stroke();
+          ctx.strokeStyle = curTimeOfDay === 'twilight' ? '#4a3f35' : '#8b5a2b';
+          ctx.lineWidth = 10 * cz;
+          ctx.beginPath();
+          ctx.moveTo(px(0), py(0));
+          ctx.lineTo(px(1), py(1));
+          ctx.lineTo(px(3), py(3));
+          ctx.moveTo(px(1), py(1));
+          ctx.lineTo(px(2), py(2));
+          ctx.lineTo(px(5), py(5));
+          ctx.moveTo(px(1), py(1));
+          ctx.lineTo(px(4), py(4));
+          ctx.stroke();
+          ctx.strokeStyle = curTimeOfDay === 'twilight' ? '#6b5849' : '#b8860b';
+          ctx.lineWidth = Math.max(1, 1.5 * cz);
+          ctx.stroke();
+          ctx.lineCap = 'butt';
+        }
+      }
+
+      // --- PALMS (culled, fewer state changes) ---
+      {
+        const leafColor = curTimeOfDay === 'twilight' ? '#0d251c' : curTimeOfDay === 'sunset' ? '#2f4f2f' : '#15803d';
+        const trunkColor = curTimeOfDay === 'twilight' ? '#272018' : '#654321';
+        ctx.strokeStyle = trunkColor;
+        ctx.fillStyle = leafColor;
+        for (let i = 0; i < PALMS.length; i++) {
+          const p = PALMS[i];
+          const scSx = halfW + (p.x - cx) * cz;
+          const scSy = halfH + (p.y - cy) * cz;
+          if (scSx < -90 || scSx > width + 90 || scSy < -100 || scSy > height + 60) continue;
+          const swayAngle = Math.sin(time + p.sway) * 0.08;
+          const cosA = Math.cos(swayAngle);
+          const sinA = Math.sin(swayAngle);
+          // Trunk as rotated quad (avoid save/translate/rotate per palm)
+          const tx = 4 * cz * p.scale;
+          const ty = -50 * cz * p.scale;
+          const rx = tx * cosA - ty * sinA;
+          const ry = tx * sinA + ty * cosA;
+          ctx.lineWidth = Math.max(1.5, 4.5 * cz);
+          ctx.beginPath();
+          ctx.moveTo(scSx, scSy);
+          ctx.quadraticCurveTo(scSx + 8 * cz, scSy - 25 * cz, scSx + rx, scSy + ry);
+          ctx.stroke();
+          // Fronds: batched into one path per palm
+          ctx.lineWidth = Math.max(1, 2 * cz);
+          ctx.strokeStyle = leafColor;
+          ctx.beginPath();
+          const topX = scSx + rx;
+          const topY = scSy + ry;
+          for (let a = 0; a < 6; a++) {
+            const angle = (a * Math.PI) / 3 + swayAngle * 0.6;
+            const lx = Math.cos(angle) * 30 * cz * p.scale;
+            const ly = Math.sin(angle) * 16 * cz * p.scale;
+            ctx.moveTo(topX, topY);
+            ctx.quadraticCurveTo(topX + lx * 0.6, topY + ly - 8 * cz, topX + lx, topY + ly);
+          }
+          ctx.stroke();
+          ctx.strokeStyle = trunkColor;
+        }
+      }
+
+      // --- 5. PAVILION (culled) ---
+      {
+        const pvSx = halfW + (500 - cx) * cz;
+        const pvSy = halfH + (630 - cy) * cz;
+        if (pvSx > -140 && pvSx < width + 140 && pvSy > -120 && pvSy < height + 80) {
+          ctx.fillStyle = curTimeOfDay === 'twilight' ? '#261b14' : '#5c3a21';
+          ctx.fillRect(pvSx - 35 * cz, pvSy - 22 * cz, 70 * cz, 22 * cz);
+          ctx.beginPath();
+          ctx.moveTo(pvSx - 45 * cz, pvSy - 22 * cz);
+          ctx.lineTo(pvSx, pvSy - 48 * cz);
+          ctx.lineTo(pvSx + 45 * cz, pvSy - 22 * cz);
+          ctx.closePath();
+          ctx.fillStyle = curTimeOfDay === 'twilight' ? '#3d2e1e' : '#b48a52';
+          ctx.fill();
+          const lg = ctx.createRadialGradient(pvSx, pvSy - 15 * cz, 2 * cz, pvSx, pvSy - 15 * cz, 45 * cz);
+          lg.addColorStop(0, 'rgba(253,224,71,0.85)');
+          lg.addColorStop(0.5, 'rgba(245,158,11,0.4)');
+          lg.addColorStop(1, 'rgba(245,158,11,0)');
+          ctx.fillStyle = lg;
+          ctx.beginPath();
+          ctx.arc(pvSx, pvSy - 15 * cz, 45 * cz, 0, TAU);
+          ctx.fill();
+          ctx.font = `${Math.max(10, 11 * cz)}px 'Plus Jakarta Sans', sans-serif`;
+          ctx.fillStyle = 'rgba(255,255,255,0.85)';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'alphabetic';
+          ctx.fillText('Sanctuary Lounge & Pavilion', pvSx, pvSy + 18 * cz);
+        }
+      }
+
+      // --- 6. TOWER ---
+      const w2s = (wx: number, wy: number) => ({
+        sx: halfW + (wx - cx) * cz,
+        sy: halfH + (wy - cy) * cz,
+        scale: cz,
       });
-
-      // --- 5. RESORT FACILITIES ON SHORE (Main Restaurant Pavilion, Spa, Infinity Edge) ---
-      const pavilionPos = worldToScreen(500, 630, width, height);
-      ctx.save();
-      // Pavilion Base
-      ctx.fillStyle = timeOfDay === 'twilight' ? '#261b14' : '#5c3a21';
-      ctx.fillRect(
-        pavilionPos.sx - 35 * cam.zoom,
-        pavilionPos.sy - 22 * cam.zoom,
-        70 * cam.zoom,
-        22 * cam.zoom
-      );
-      // Thatched Roof
-      ctx.beginPath();
-      ctx.moveTo(pavilionPos.sx - 45 * cam.zoom, pavilionPos.sy - 22 * cam.zoom);
-      ctx.lineTo(pavilionPos.sx, pavilionPos.sy - 48 * cam.zoom);
-      ctx.lineTo(pavilionPos.sx + 45 * cam.zoom, pavilionPos.sy - 22 * cam.zoom);
-      ctx.closePath();
-      ctx.fillStyle = timeOfDay === 'twilight' ? '#3d2e1e' : '#b48a52';
-      ctx.fill();
-
-      // Warm lantern glow inside pavilion
-      const lanternGlow = ctx.createRadialGradient(
-        pavilionPos.sx,
-        pavilionPos.sy - 15 * cam.zoom,
-        2 * cam.zoom,
-        pavilionPos.sx,
-        pavilionPos.sy - 15 * cam.zoom,
-        45 * cam.zoom
-      );
-      lanternGlow.addColorStop(0, 'rgba(253, 224, 71, 0.85)');
-      lanternGlow.addColorStop(0.5, 'rgba(245, 158, 11, 0.4)');
-      lanternGlow.addColorStop(1, 'rgba(245, 158, 11, 0)');
-      ctx.fillStyle = lanternGlow;
-      ctx.beginPath();
-      ctx.arc(pavilionPos.sx, pavilionPos.sy - 15 * cam.zoom, 45 * cam.zoom, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Label for Central Sanctuary
-      ctx.font = `${Math.max(10, 11 * cam.zoom)}px 'Plus Jakarta Sans', sans-serif`;
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-      ctx.textAlign = 'center';
-      ctx.fillText('Sanctuary Lounge & Pavilion', pavilionPos.sx, pavilionPos.sy + 18 * cam.zoom);
-      ctx.restore();
-
-      // --- 6. 10-FLOOR OCEAN TOWER (WITH BALCONY & ROOFTOP SWIMMING POOL SUITE) ---
       renderOceanTower({
         ctx,
-        hotels,
-        selectedHotel,
+        hotels: curHotels,
+        selectedHotel: curSelected,
         hoveredHotel: hoveredHotelRef.current,
-        selectedCategory,
-        timeOfDay,
+        selectedCategory: curCategory,
+        timeOfDay: curTimeOfDay,
         time,
-        cam,
-        worldToScreen,
+        cam: { x: cx, y: cy, zoom: cz },
+        worldToScreen: w2s,
         width,
         height,
       });
 
-      // --- 7. STANDALONE COTTAGES & OVERWATER VILLAS RENDERING ---
-      hotels.filter((h) => !h.isBuildingFloor).forEach((hotel) => {
-        const isSelected = selectedHotel?.id === hotel.id;
-        const isHovered = hoveredHotelRef.current?.id === hotel.id;
-        const matchesFilter = selectedCategory === 'all' || hotel.category === selectedCategory;
-
-        // Apply depth and parallax
-        const pos = worldToScreen(hotel.position.x, hotel.position.y, width, height);
+      // --- 7. VILLAS (culled, cheap glows only when hot) ---
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (let hi = 0; hi < curHotels.length; hi++) {
+        const hotel = curHotels[hi];
+        if (hotel.isBuildingFloor) continue;
+        const isSelected = curSelected !== null && curSelected.id === hotel.id;
+        const isHovered = hoveredHotelRef.current !== null && hoveredHotelRef.current.id === hotel.id;
+        if (!isSelected && !isHovered) {
+          if (curCategory !== 'all' && hotel.category !== curCategory) {
+            // still draw dimmed, but skip if fully off-screen first
+          }
+        }
+        const sx = halfW + (hotel.position.x - cx) * cz;
+        const sy = halfH + (hotel.position.y - cy) * cz;
+        if (sx < -120 || sx > width + 120 || sy < -120 || sy > height + 120) continue;
 
         ctx.save();
-        ctx.translate(pos.sx, pos.sy);
+        ctx.translate(sx, sy);
+        ctx.globalAlpha = curCategory !== 'all' && hotel.category !== curCategory && !isSelected ? 0.22 : 1.0;
+        const lift = isSelected ? 1.18 : isHovered ? 1.1 : 1.0;
+        if (lift !== 1) ctx.scale(lift, lift);
+        const vz = cz;
 
-        // Alpha based on category filter
-        if (!matchesFilter && !isSelected) {
-          ctx.globalAlpha = 0.22;
-        } else {
-          ctx.globalAlpha = 1.0;
-        }
-
-        // Slight hover or selected scale lift
-        const liftScale = isSelected ? 1.18 : isHovered ? 1.1 : 1.0;
-        ctx.scale(liftScale, liftScale);
-
-        const villaZoom = cam.zoom;
-
-        // 1. Water shadow under the stilted villa
+        // Shadow (flat, no gradient)
+        ctx.fillStyle = 'rgba(0,0,0,0.4)';
         ctx.beginPath();
-        ctx.ellipse(
-          0,
-          16 * villaZoom,
-          32 * villaZoom,
-          10 * villaZoom,
-          0,
-          0,
-          Math.PI * 2
-        );
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+        ctx.ellipse(0, 16 * vz, 32 * vz, 10 * vz, 0, 0, TAU);
         ctx.fill();
 
-        // 2. Stilts / Pilings
-        ctx.strokeStyle = timeOfDay === 'twilight' ? '#1c1510' : '#452a15';
-        ctx.lineWidth = 2.5 * villaZoom;
+        // Stilts (single path)
+        ctx.strokeStyle = curTimeOfDay === 'twilight' ? '#1c1510' : '#452a15';
+        ctx.lineWidth = Math.max(1, 2.5 * vz);
         ctx.beginPath();
-        // 4 stilt legs
-        ctx.moveTo(-18 * villaZoom, 0);
-        ctx.lineTo(-18 * villaZoom, 16 * villaZoom);
-        ctx.moveTo(18 * villaZoom, 0);
-        ctx.lineTo(18 * villaZoom, 16 * villaZoom);
-        ctx.moveTo(-10 * villaZoom, 4 * villaZoom);
-        ctx.lineTo(-10 * villaZoom, 18 * villaZoom);
-        ctx.moveTo(10 * villaZoom, 4 * villaZoom);
-        ctx.lineTo(10 * villaZoom, 18 * villaZoom);
+        ctx.moveTo(-18 * vz, 0); ctx.lineTo(-18 * vz, 16 * vz);
+        ctx.moveTo(18 * vz, 0); ctx.lineTo(18 * vz, 16 * vz);
+        ctx.moveTo(-10 * vz, 4 * vz); ctx.lineTo(-10 * vz, 18 * vz);
+        ctx.moveTo(10 * vz, 4 * vz); ctx.lineTo(10 * vz, 18 * vz);
         ctx.stroke();
 
-        // 3. Wooden Deck
-        ctx.fillStyle = timeOfDay === 'twilight' ? '#3d2e20' : '#85542b';
-        ctx.fillRect(-26 * villaZoom, -4 * villaZoom, 52 * villaZoom, 8 * villaZoom);
+        // Deck
+        ctx.fillStyle = curTimeOfDay === 'twilight' ? '#3d2e20' : '#85542b';
+        ctx.fillRect(-26 * vz, -4 * vz, 52 * vz, 8 * vz);
         ctx.strokeStyle = '#b8860b';
-        ctx.lineWidth = 0.75 * villaZoom;
-        ctx.strokeRect(-26 * villaZoom, -4 * villaZoom, 52 * villaZoom, 8 * villaZoom);
+        ctx.lineWidth = Math.max(1, 0.75 * vz);
+        ctx.strokeRect(-26 * vz, -4 * vz, 52 * vz, 8 * vz);
 
-        // 4. Private Pool / Glass Floor Accent (for Deluxe/Premium)
+        // Pool accent
         if (hotel.category === 'premium' || hotel.category === 'deluxe') {
           ctx.fillStyle = '#06b6d4';
-          ctx.beginPath();
-          ctx.roundRect(-22 * villaZoom, 4 * villaZoom, 14 * villaZoom, 8 * villaZoom, 2 * villaZoom);
-          ctx.fill();
-          // Shimmer on pool
+          ctx.fillRect(-22 * vz, 4 * vz, 14 * vz, 8 * vz);
           ctx.fillStyle = 'rgba(255,255,255,0.6)';
-          ctx.fillRect(-20 * villaZoom, 5 * villaZoom, 4 * villaZoom, 1.5 * villaZoom);
+          ctx.fillRect(-20 * vz, 5 * vz, 4 * vz, 1.5 * vz);
         }
 
-        // 5. Villa Walls & Glass Windows
-        ctx.fillStyle = timeOfDay === 'twilight' ? '#2b211a' : '#eed9b7';
-        ctx.fillRect(-18 * villaZoom, -26 * villaZoom, 36 * villaZoom, 22 * villaZoom);
+        // Walls: solid + warm wash (no radial gradient unless hot)
+        ctx.fillStyle = curTimeOfDay === 'twilight' ? '#2b211a' : '#eed9b7';
+        ctx.fillRect(-18 * vz, -26 * vz, 36 * vz, 22 * vz);
+        if (isSelected || isHovered) {
+          const wg = ctx.createRadialGradient(0, -16 * vz, 2 * vz, 0, -16 * vz, 22 * vz);
+          wg.addColorStop(0, 'rgba(254,240,138,0.95)');
+          wg.addColorStop(0.5, 'rgba(245,158,11,0.7)');
+          wg.addColorStop(1, 'rgba(245,158,11,0.1)');
+          ctx.fillStyle = wg;
+          ctx.fillRect(-14 * vz, -22 * vz, 28 * vz, 14 * vz);
+        } else {
+          ctx.fillStyle = 'rgba(245,158,11,0.55)';
+          ctx.fillRect(-14 * vz, -22 * vz, 28 * vz, 14 * vz);
+        }
 
-        // Warm interior glow through windows
-        const windowGlow = ctx.createRadialGradient(
-          0,
-          -16 * villaZoom,
-          2 * villaZoom,
-          0,
-          -16 * villaZoom,
-          22 * villaZoom
-        );
-        windowGlow.addColorStop(0, 'rgba(254, 240, 138, 0.95)');
-        windowGlow.addColorStop(0.5, 'rgba(245, 158, 11, 0.7)');
-        windowGlow.addColorStop(1, 'rgba(245, 158, 11, 0.1)');
-        ctx.fillStyle = windowGlow;
-        ctx.fillRect(-14 * villaZoom, -22 * villaZoom, 28 * villaZoom, 14 * villaZoom);
-
-        // 6. Thatched / Curved Balinese Villa Roof
+        // Roof
         ctx.beginPath();
         if (hotel.category === 'premium') {
-          // Double-tier royal roof
-          ctx.moveTo(-28 * villaZoom, -26 * villaZoom);
-          ctx.lineTo(-2 * villaZoom, -46 * villaZoom);
-          ctx.lineTo(28 * villaZoom, -26 * villaZoom);
+          ctx.moveTo(-28 * vz, -26 * vz);
+          ctx.lineTo(-2 * vz, -46 * vz);
+          ctx.lineTo(28 * vz, -26 * vz);
           ctx.closePath();
-          ctx.fillStyle = timeOfDay === 'twilight' ? '#4a3525' : '#a27641';
+          ctx.fillStyle = curTimeOfDay === 'twilight' ? '#4a3525' : '#a27641';
           ctx.fill();
-
-          // Upper pagoda tier
           ctx.beginPath();
-          ctx.moveTo(-16 * villaZoom, -42 * villaZoom);
-          ctx.lineTo(0, -58 * villaZoom);
-          ctx.lineTo(16 * villaZoom, -42 * villaZoom);
+          ctx.moveTo(-16 * vz, -42 * vz);
+          ctx.lineTo(0, -58 * vz);
+          ctx.lineTo(16 * vz, -42 * vz);
           ctx.closePath();
-          ctx.fillStyle = timeOfDay === 'twilight' ? '#3d281a' : '#845727';
+          ctx.fillStyle = curTimeOfDay === 'twilight' ? '#3d281a' : '#845727';
           ctx.fill();
         } else {
-          // Single elegant thatched roof
-          ctx.moveTo(-26 * villaZoom, -26 * villaZoom);
-          ctx.lineTo(0, -48 * villaZoom);
-          ctx.lineTo(26 * villaZoom, -26 * villaZoom);
+          ctx.moveTo(-26 * vz, -26 * vz);
+          ctx.lineTo(0, -48 * vz);
+          ctx.lineTo(26 * vz, -26 * vz);
           ctx.closePath();
-          ctx.fillStyle = timeOfDay === 'twilight' ? '#3f2d20' : '#9b6e3c';
+          ctx.fillStyle = curTimeOfDay === 'twilight' ? '#3f2d20' : '#9b6e3c';
           ctx.fill();
         }
 
-        // 7. Beacon & Selection Halo
+        // Halo only when hot (was: radial + ring for hot only — keep, it's rare)
         if (isSelected || isHovered) {
           const pulse = (Math.sin(time * 3) + 1) * 0.5;
-          const haloRadius = (36 + pulse * 10) * villaZoom;
-
-          const haloGrad = ctx.createRadialGradient(0, -14 * villaZoom, 10, 0, -14 * villaZoom, haloRadius);
-          haloGrad.addColorStop(0, 'rgba(212, 175, 55, 0.45)');
-          haloGrad.addColorStop(0.6, 'rgba(212, 175, 55, 0.15)');
-          haloGrad.addColorStop(1, 'rgba(212, 175, 55, 0)');
-
-          ctx.fillStyle = haloGrad;
+          const haloR = (36 + pulse * 10) * vz;
+          const hg = ctx.createRadialGradient(0, -14 * vz, 10, 0, -14 * vz, haloR);
+          hg.addColorStop(0, 'rgba(212,175,55,0.45)');
+          hg.addColorStop(0.6, 'rgba(212,175,55,0.15)');
+          hg.addColorStop(1, 'rgba(212,175,55,0)');
+          ctx.fillStyle = hg;
           ctx.beginPath();
-          ctx.arc(0, -14 * villaZoom, haloRadius, 0, Math.PI * 2);
+          ctx.arc(0, -14 * vz, haloR, 0, TAU);
           ctx.fill();
-
-          // Outer pulsing ring
           ctx.strokeStyle = isSelected ? '#d4af37' : '#38bdf8';
-          ctx.lineWidth = 2 * villaZoom;
+          ctx.lineWidth = Math.max(1, 2 * vz);
           ctx.beginPath();
-          ctx.arc(0, -14 * villaZoom, (32 + pulse * 6) * villaZoom, 0, Math.PI * 2);
+          ctx.arc(0, -14 * vz, (32 + pulse * 6) * vz, 0, TAU);
           ctx.stroke();
         }
 
-        // Category Tag Badge floating above
-        ctx.font = `600 ${Math.max(9, 10 * villaZoom)}px 'Space Mono', monospace`;
+        // Category pill (cached text width, fillRect instead of roundRect)
+        const fontStr = `600 ${Math.max(9, 10 * vz)}px 'Space Mono', monospace`;
+        ctx.font = fontStr;
         const catText = hotel.category.toUpperCase();
-        const textWidth = ctx.measureText(catText).width;
-        const pillY = -60 * villaZoom;
-
-        // Pill background
-        ctx.fillStyle = isSelected
-          ? '#d4af37'
-          : hotel.category === 'premium'
-          ? '#b45309'
-          : hotel.category === 'deluxe'
-          ? '#1d4ed8'
-          : hotel.category === 'comfort'
-          ? '#0369a1'
-          : '#047857';
-
-        ctx.beginPath();
-        ctx.roundRect(
-          -textWidth / 2 - 8 * villaZoom,
-          pillY - 8 * villaZoom,
-          textWidth + 16 * villaZoom,
-          16 * villaZoom,
-          8 * villaZoom
-        );
-        ctx.fill();
-
+        const cacheKey = hotel.id + '|' + (vz * 10 | 0);
+        let tw = pillWidthCache.get(cacheKey);
+        if (tw === undefined) {
+          tw = ctx.measureText(catText).width;
+          // Bound cache size
+          if (pillWidthCache.size > 64) pillWidthCache.clear();
+          pillWidthCache.set(cacheKey, tw);
+        }
+        const pillY = -60 * vz;
+        ctx.fillStyle = isSelected ? '#d4af37' : (PILL_COLORS[hotel.category] ?? '#047857');
+        const pillPad = 8 * vz;
+        ctx.fillRect(-tw / 2 - pillPad, pillY - pillPad, tw + pillPad * 2, 16 * vz);
         ctx.fillStyle = isSelected ? '#000000' : '#ffffff';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
         ctx.fillText(catText, 0, pillY);
-
         ctx.restore();
-      });
-
-      // --- 7. PROPERTY TOUR HOTSPOTS (When in property or tour mode) ---
-      if (selectedHotel && (isTourMode || cam.zoom > 1.3)) {
-        selectedHotel.tourPoints.forEach((tp) => {
-          const ptScreen = worldToScreen(tp.view.x, tp.view.y, width, height);
-          const isHotspotActive = activeTourPointId === tp.id;
-          const isHotspotHovered = hoveredHotspotRef.current?.id === tp.id;
-
-          ctx.save();
-          ctx.translate(ptScreen.sx, ptScreen.sy);
-
-          const pulse = (Math.sin(time * 4) + 1) * 0.5;
-
-          // Hotspot pulse ring
-          ctx.beginPath();
-          ctx.arc(0, 0, (14 + pulse * 6) * cam.zoom, 0, Math.PI * 2);
-          ctx.strokeStyle = isHotspotActive ? '#d4af37' : 'rgba(56, 189, 248, 0.7)';
-          ctx.lineWidth = 2 * cam.zoom;
-          ctx.stroke();
-
-          // Hotspot core
-          ctx.beginPath();
-          ctx.arc(0, 0, 8 * cam.zoom, 0, Math.PI * 2);
-          ctx.fillStyle = isHotspotActive ? '#d4af37' : '#0284c7';
-          ctx.fill();
-
-          ctx.beginPath();
-          ctx.arc(0, 0, 3.5 * cam.zoom, 0, Math.PI * 2);
-          ctx.fillStyle = '#ffffff';
-          ctx.fill();
-
-          // Hotspot Label
-          ctx.font = `600 ${Math.max(10, 11 * cam.zoom)}px 'Plus Jakarta Sans', sans-serif`;
-          ctx.textAlign = 'center';
-          ctx.fillStyle = '#ffffff';
-          ctx.shadowColor = 'rgba(0,0,0,0.8)';
-          ctx.shadowBlur = 4;
-          ctx.fillText(tp.name, 0, -14 * cam.zoom);
-
-          ctx.restore();
-        });
       }
 
-      // --- 8. FLOATING PARTICLES (Sea Spray / Sparks / Fireflies) ---
-      particlesRef.current.forEach((p) => {
-        p.x += p.speedX;
-        p.y += p.speedY;
-
-        if (p.x < 0) p.x = WORLD_WIDTH;
-        if (p.x > WORLD_WIDTH) p.x = 0;
-        if (p.y < 0) p.y = WORLD_HEIGHT;
-        if (p.y > WORLD_HEIGHT) p.y = 0;
-
-        p.alpha += Math.sin(time * 2 + p.pulseSpeed) * 0.01;
-        const safeAlpha = Math.max(0.1, Math.min(p.maxAlpha, p.alpha));
-
-        const ptScreen = worldToScreen(p.x, p.y, width, height);
-
-        ctx.beginPath();
-        ctx.arc(ptScreen.sx, ptScreen.sy, p.size * cam.zoom, 0, Math.PI * 2);
-        if (timeOfDay === 'sunset') {
-          ctx.fillStyle = `rgba(251, 191, 36, ${safeAlpha})`;
-        } else if (timeOfDay === 'twilight') {
-          ctx.fillStyle = `rgba(186, 230, 253, ${safeAlpha})`;
-        } else {
-          ctx.fillStyle = `rgba(255, 255, 255, ${safeAlpha * 0.6})`;
+      // --- 8. TOUR HOTSPOTS (no shadowBlur; stroke text for readability) ---
+      if (curSelected && (curTourMode || cz > 1.3)) {
+        ctx.textAlign = 'center';
+        for (let ti = 0; ti < curSelected.tourPoints.length; ti++) {
+          const tp = curSelected.tourPoints[ti];
+          const psx = halfW + (tp.view.x - cx) * cz;
+          const psy = halfH + (tp.view.y - cy) * cz;
+          if (psx < -80 || psx > width + 80 || psy < -60 || psy > height + 60) continue;
+          const isActive = curActiveTp === tp.id;
+          ctx.save();
+          ctx.translate(psx, psy);
+          const pulse = (Math.sin(time * 4) + 1) * 0.5;
+          ctx.beginPath();
+          ctx.arc(0, 0, (14 + pulse * 6) * cz, 0, TAU);
+          ctx.strokeStyle = isActive ? '#d4af37' : 'rgba(56,189,248,0.7)';
+          ctx.lineWidth = Math.max(1, 2 * cz);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(0, 0, 8 * cz, 0, TAU);
+          ctx.fillStyle = isActive ? '#d4af37' : '#0284c7';
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(0, 0, 3.5 * cz, 0, TAU);
+          ctx.fillStyle = '#ffffff';
+          ctx.fill();
+          ctx.font = `600 ${Math.max(10, 11 * cz)}px 'Plus Jakarta Sans', sans-serif`;
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+          ctx.strokeText(tp.name, 0, -14 * cz);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(tp.name, 0, -14 * cz);
+          ctx.restore();
         }
-        ctx.fill();
-      });
+      }
 
-      ctx.restore();
-      animationFrameId = requestAnimationFrame(render);
+      // --- 9. PARTICLES (fillRect, no arcs, inline projection) ---
+      {
+        const parts = particlesRef.current;
+        let pColor: string;
+        if (curTimeOfDay === 'sunset') pColor = '251,191,36';
+        else if (curTimeOfDay === 'twilight') pColor = '186,230,253';
+        else pColor = '255,255,255';
+        const dim = curTimeOfDay === 'day' ? 0.6 : 1;
+        for (let i = 0; i < parts.length; i++) {
+          const p = parts[i];
+          p.x += p.speedX;
+          p.y += p.speedY;
+          if (p.x < 0) p.x = WORLD_WIDTH;
+          else if (p.x > WORLD_WIDTH) p.x = 0;
+          if (p.y < 0) p.y = WORLD_HEIGHT;
+          else if (p.y > WORLD_HEIGHT) p.y = 0;
+          const tw = 0.5 + 0.5 * Math.sin(time * 2 + p.seed);
+          const a = Math.max(0.1, Math.min(p.maxAlpha, p.alpha * (0.6 + 0.4 * tw))) * dim;
+          const psx = halfW + (p.x - cx) * cz;
+          const psy = halfH + (p.y - cy) * cz;
+          if (psx < -10 || psx > width + 10 || psy < -10 || psy > height + 10) continue;
+          const s = p.size * cz;
+          ctx.fillStyle = `rgba(${pColor},${a.toFixed(3)})`;
+          ctx.fillRect(psx - s / 2, psy - s / 2, s, s);
+        }
+      }
     };
 
     animationFrameId = requestAnimationFrame(render);
-    return () => cancelAnimationFrame(animationFrameId);
-  }, [
-    hotels,
-    selectedHotel,
-    selectedCategory,
-    timeOfDay,
-    isTourMode,
-    activeTourPointId,
-    worldToScreen,
-    screenToWorld,
-  ]);
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+      ro.disconnect();
+      io.disconnect();
+      document.removeEventListener('visibilitychange', onVis);
+    };
+    // Mount once: all changing values read via liveRef / cameraRef
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Hit testing for Pointer Hover & Selection
+  // Throttled hover: coalesce pointermove via rAF, skip setState when unchanged
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const sx = e.clientX - rect.left;
-    const sy = e.clientY - rect.top;
+    if (hoverRafRef.current) return;
+    const clientX = e.clientX;
+    const clientY = e.clientY;
+    hoverRafRef.current = requestAnimationFrame(() => {
+      hoverRafRef.current = 0;
+      const c = canvasRef.current;
+      if (!c) return;
+      const rect = c.getBoundingClientRect();
+      const sx = clientX - rect.left;
+      const sy = clientY - rect.top;
+      const live = liveRef.current;
 
-    // Handle Drag panning
-    if (isDraggingRef.current) {
-      const dx = sx - dragStartRef.current.x;
-      const dy = sy - dragStartRef.current.y;
-      const zoom = cameraRef.current.zoom;
-
-      cameraRef.current.targetX = cameraStartRef.current.x - dx / zoom;
-      cameraRef.current.targetY = cameraStartRef.current.y - dy / zoom;
-
-      // Keep inside bounds
-      cameraRef.current.targetX = Math.max(100, Math.min(WORLD_WIDTH - 100, cameraRef.current.targetX));
-      cameraRef.current.targetY = Math.max(120, Math.min(WORLD_HEIGHT - 80, cameraRef.current.targetY));
-      return;
-    }
-
-    const { wx, wy } = screenToWorld(sx, sy, canvas.clientWidth, canvas.clientHeight);
-
-    // 1. Check Tour Hotspots first if in property tour mode
-    if (selectedHotel && (isTourMode || cameraRef.current.zoom > 1.3)) {
-      let foundHotspot: TourPoint | null = null;
-      for (const tp of selectedHotel.tourPoints) {
-        const dist = Math.hypot(wx - tp.view.x, wy - tp.view.y);
-        if (dist < 22) {
-          foundHotspot = tp;
-          break;
-        }
-      }
-      if (foundHotspot) {
-        hoveredHotspotRef.current = foundHotspot;
-        canvas.style.cursor = 'pointer';
+      if (isDraggingRef.current) {
+        const dx = sx - dragStartRef.current.x;
+        const dy = sy - dragStartRef.current.y;
+        const zoom = cameraRef.current.zoom;
+        const nx = Math.max(100, Math.min(WORLD_WIDTH - 100, cameraStartRef.current.x - dx / zoom));
+        const ny = Math.max(120, Math.min(WORLD_HEIGHT - 80, cameraStartRef.current.y - dy / zoom));
+        cameraRef.current.targetX = nx;
+        cameraRef.current.targetY = ny;
         return;
+      }
+
+      const cw = c.clientWidth || 1;
+      const chh = c.clientHeight || 1;
+      const cam = cameraRef.current;
+      const wx = (sx - cw / 2) / cam.zoom + cam.x;
+      const wy = (sy - chh / 2) / cam.zoom + cam.y;
+
+      if (live.selectedHotel && (live.isTourMode || cam.zoom > 1.3)) {
+        let found: TourPoint | null = null;
+        const tps = live.selectedHotel.tourPoints;
+        for (let i = 0; i < tps.length; i++) {
+          const tp = tps[i];
+          const ddx = wx - tp.view.x;
+          const ddy = wy - tp.view.y;
+          if (ddx * ddx + ddy * ddy < 22 * 22) { found = tp; break; }
+        }
+        hoveredHotspotRef.current = found;
+        if (found) { c.style.cursor = 'pointer'; return; }
       } else {
         hoveredHotspotRef.current = null;
       }
-    }
 
-    // 2. Check Hotels (Prioritizing Building floors if inside tower bounding box)
-    let foundHotel: Hotel | null = null;
-
-    // Check 10-floor building bounding box on sand (balconies at x=28 to x=60, core at x=60 to x=150, groundY=840, floorHeight=25)
-    if (wx >= 24 && wx <= 154 && wy >= 340 && wy <= 850) {
-      const groundY = 840;
-      const floorHeight = 25;
-      const rawFloor = Math.floor((groundY - wy) / floorHeight) + 1;
-      const targetFloorNumber = Math.max(1, Math.min(10, rawFloor));
-      foundHotel = hotels.find((h) => h.isBuildingFloor && h.floorNumber === targetFloorNumber) || null;
-    }
-
-    // Otherwise check standalone cottages with radial distance
-    if (!foundHotel) {
-      const hitRadius = 45;
-      for (const h of hotels) {
-        if (h.isBuildingFloor) continue;
-        const dist = Math.hypot(wx - h.position.x, wy - h.position.y);
-        if (dist < hitRadius) {
-          foundHotel = h;
-          break;
+      let foundHotel: Hotel | null = null;
+      if (wx >= 24 && wx <= 154 && wy >= 340 && wy <= 850) {
+        const groundY = 840;
+        const floorHeight = 25;
+        const rawFloor = Math.floor((groundY - wy) / floorHeight) + 1;
+        const targetFloorNumber = Math.max(1, Math.min(10, rawFloor));
+        const hs = live.hotels;
+        for (let i = 0; i < hs.length; i++) {
+          const h = hs[i];
+          if (h.isBuildingFloor && h.floorNumber === targetFloorNumber) { foundHotel = h; break; }
         }
       }
-    }
+      if (!foundHotel) {
+        const hs = live.hotels;
+        for (let i = 0; i < hs.length; i++) {
+          const h = hs[i];
+          if (h.isBuildingFloor) continue;
+          const ddx = wx - h.position.x;
+          const ddy = wy - h.position.y;
+          if (ddx * ddx + ddy * ddy < 45 * 45) { foundHotel = h; break; }
+        }
+      }
 
-    hoveredHotelRef.current = foundHotel;
-    setHoveredHotel(foundHotel);
-
-    if (foundHotel) {
-      canvas.style.cursor = 'pointer';
-      setTooltipPos({ x: sx, y: sy });
-    } else {
-      canvas.style.cursor = isDraggingRef.current ? 'grabbing' : 'grab';
-      setTooltipPos(null);
-    }
+      const prevId = hoveredHotelRef.current?.id ?? null;
+      const nextId = foundHotel?.id ?? null;
+      hoveredHotelRef.current = foundHotel;
+      const last = lastTooltipRef.current;
+      const moved = Math.abs(sx - last.x) + Math.abs(sy - last.y);
+      if (prevId !== nextId) {
+        setHoveredHotel(foundHotel);
+        lastTooltipRef.current = { id: nextId, x: sx, y: sy };
+        setTooltipPos(foundHotel ? { x: sx, y: sy } : null);
+        c.style.cursor = foundHotel ? 'pointer' : 'grab';
+      } else if (foundHotel && moved > 5) {
+        lastTooltipRef.current = { id: nextId, x: sx, y: sy };
+        setTooltipPos({ x: sx, y: sy });
+      } else if (!foundHotel && last.id !== null) {
+        lastTooltipRef.current = { id: null, x: sx, y: sy };
+        setTooltipPos(null);
+        c.style.cursor = 'grab';
+      }
+    });
   };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -911,39 +931,24 @@ export const ResortCanvas: React.FC<ResortCanvasProps> = ({
       x: cameraRef.current.targetX,
       y: cameraRef.current.targetY,
     };
+    (e.target as HTMLCanvasElement).setPointerCapture?.(e.pointerId);
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    // Check if was a drag or a click
     const dragDistance = Math.hypot(
       e.clientX - dragStartRef.current.x,
       e.clientY - dragStartRef.current.y
     );
-
     isDraggingRef.current = false;
-
-    // Only handle click if mouse moved less than 6px
     if (dragDistance < 6) {
       if (hoveredHotspotRef.current && onSelectTourPoint) {
         onSelectTourPoint(hoveredHotspotRef.current);
         return;
       }
-
       if (hoveredHotelRef.current) {
         onSelectHotel(hoveredHotelRef.current);
       }
     }
-  };
-
-  // Zoom with Wheel
-  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
-    const zoomFactor = e.deltaY < 0 ? 1.15 : 0.88;
-    const nextZoom = Math.max(0.75, Math.min(2.5, cameraRef.current.targetZoom * zoomFactor));
-    cameraRef.current.targetZoom = nextZoom;
   };
 
   return (
@@ -960,17 +965,19 @@ export const ResortCanvas: React.FC<ResortCanvasProps> = ({
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}
         onPointerLeave={() => {
+          if (hoverRafRef.current) { cancelAnimationFrame(hoverRafRef.current); hoverRafRef.current = 0; }
           isDraggingRef.current = false;
           setHoveredHotel(null);
           hoveredHotelRef.current = null;
+          lastTooltipRef.current = { id: null, x: 0, y: 0 };
+          setTooltipPos(null);
         }}
-        onWheel={handleWheel}
       />
 
       {/* Floating Hover Tooltip (Kovnar editorial styling) */}
       {hoveredHotel && tooltipPos && !selectedHotel && (
         <div
-          className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full transform pb-4 transition-all duration-150"
+          className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full transform pb-4"
           style={{
             left: `${tooltipPos.x}px`,
             top: `${tooltipPos.y - 12}px`,

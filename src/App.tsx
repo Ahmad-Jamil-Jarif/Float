@@ -72,6 +72,13 @@ export default function App() {
     saveStoredNotifications(notifications);
   }, [notifications]);
 
+  // Reset window scroll whenever the view changes — otherwise the
+  // list view inherits the home page's scroll position and opens mid-page.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+  }, [currentView]);
+
   // Unread notifications count
   const unreadCount = notifications.filter((n) => !n.read).length;
 
