@@ -168,9 +168,7 @@ export const AccessibleListView: React.FC<AccessibleListViewProps> = ({
             <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
               <div>
                 <h2
-                  className={`font-editorial font-semibold text-white group-hover:text-[#d4af37] transition-colors leading-snug ${
-                    hotel.isBuildingFloor ? 'text-sm' : 'text-xl'
-                  }`}
+                  className="villa-card-title font-semibold text-white group-hover:text-[#d4af37] transition-colors"
                 >
                   {hotel.name}
                 </h2>

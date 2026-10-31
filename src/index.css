@@ -75,6 +75,7 @@ blockquote em, h2 em { font-family: Georgia, serif; font-weight: 400; letter-spa
 .collection-section { max-width: none; border-top: 1px solid var(--line); padding-top: 110px; }
 .section-heading { display: flex; justify-content: space-between; align-items: end; gap: 30px; margin-bottom: 65px; }
 h2 { margin: 22px 0 0; font: 700 clamp(45px, 6.5vw, 92px)/.86 var(--display); letter-spacing: -.1em; }
+#accessible-villa-directory .villa-card-title { margin: 0; font: 600 clamp(1rem, 1.35vw, 1.25rem)/1.2 var(--display); letter-spacing: -.03em; text-align: left; text-wrap: balance; overflow-wrap: anywhere; }
 .section-note { max-width: 250px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
 .showcase-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 18px; align-items: start; }
 .showcase-card { min-height: 410px; position: relative; overflow: hidden; background: #d2d0c9; color: white; }
