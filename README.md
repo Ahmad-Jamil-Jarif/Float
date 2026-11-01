@@ -1,12 +1,78 @@
-# Float
+<p align="center">
+  <img src="https://img.shields.io/badge/FLOAT-Premium%20Resort%20Experience-101820?style=for-the-badge" alt="Float — Premium Resort Experience" />
+</p>
 
-> "The space we inhabit is a reflection of the pauses we take between our thoughts." — *Float*
+<h1 align="center">FLOAT — A Quiet Architecture for Living</h1>
+<h3 align="center">Private villas, considered experiences, and a slower way to discover the coast</h3>
 
-**Float** is a premium, minimalist digital exhibition and catalog showcasing handcrafted architectural objects, vessels, lighting, and textiles. Designed with rich, luxurious aesthetics, smooth interactions, and a curated gallery layout, Float provides a premium experience for design enthusiasts and curators.
+<p align="center">
+  <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React 19" />
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/Vite-6-646CFF?style=flat-square&logo=vite&logoColor=white" alt="Vite 6" />
+  <img src="https://img.shields.io/badge/Tailwind_CSS-4-38B2AC?style=flat-square&logo=tailwindcss&logoColor=white" alt="Tailwind CSS 4" />
+  <img src="https://img.shields.io/badge/React_Router-7-CA4245?style=flat-square&logo=reactrouter&logoColor=white" alt="React Router 7" />
+</p>
 
 ---
 
-##  Project Preview
+## Executive Summary
+
+> "The space we inhabit is a reflection of the pauses we take between our thoughts." — *Float*
+
+**Float** is a resort experience showcasing private villas, curated stays, and guest services through an editorial landing page, interactive resort map, residence directory, and staff operations dashboard.
+
+---
+
+##  App Tour (Screenshots)
+
+### 1. Resort Landing Page
+
+<p align="center">
+  <img src="Images/Landing%20page%201.png" width="750" alt="Resort landing page" />
+</p>
+*Float Resort homepage — coastal hero, navigation and enquiry entry point.*
+
+### 2. The Resort Philosophy
+
+<p align="center">
+  <img src="Images/Landing%20page%202.png" width="750" alt="Resort philosophy section" />
+</p>
+*The resort philosophy — a visual introduction to its design and sense of place.*
+
+### 3. Residence Collection
+
+<p align="center">
+  <img src="Images/Landing%20page%203.png" width="750" alt="Residence collection preview" />
+</p>
+*Residence collection — featured villas and curated places to stay.*
+
+### 4. Guest Experiences
+
+<p align="center">
+  <img src="Images/Landing%20page%204.png" width="750" alt="Guest experiences section" />
+</p>
+*Guest experiences — resort services and activities.*
+
+### 5. Interactive 2D Resort Map
+
+<p align="center">
+  <img src="Images/Interective%202d%20map.png" width="750" alt="Interactive 2D resort map" />
+</p>
+*Interactive map — explore resort locations and villa categories.*
+
+### 6. Residence Directory
+
+<p align="center">
+  <img src="Images/Residence.png" width="750" alt="Residence directory" />
+</p>
+*Residence directory — browse and filter available villas.*
+
+### 7. Staff Operations Dashboard
+
+<p align="center">
+  <img src="Images/Employee%20pos.png" width="750" alt="Staff operations dashboard" />
+</p>
+*Staff operations — manage reservations, guest profiles and villa status.*
 
 ##  Key Features
 
@@ -75,5 +141,3 @@ To test the curation features:
    - Curatorial narration & price updates
    - Gallery image url updates
    - Archiving/deleting objects directly from the collection grid
-
-##  Project Gallery
